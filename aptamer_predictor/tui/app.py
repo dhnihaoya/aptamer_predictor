@@ -16,7 +16,7 @@ class PredictorApp(App):
     CSS_PATH = "styles.tcss"
 
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
+        Binding("escape", "quit", "Quit"),
     ]
 
     def __init__(self, model_dir: str | None = None, **kwargs):
