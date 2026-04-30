@@ -23,7 +23,7 @@ conda activate aptamer-pred
 ### 2. Install RDKit
 
 ```bash
-conda install -c conda-forge rdkit=2023.9 -y
+conda install -c conda-forge rdkit=2023.9.5 -y
 ```
 
 ### 3. Install remaining dependencies
@@ -32,7 +32,7 @@ conda install -c conda-forge rdkit=2023.9 -y
 pip install -r requirements.txt
 ```
 
-> **Note:** `rdkit` must be installed via conda, not pip. All other packages can be installed via pip.
+> **Note:** install the pinned RDKit version above; descriptor values are part of the trained model input schema. `rdkit` should be installed via conda, not pip. All other packages can be installed via pip.
 
 ### 4. Verify installation
 
