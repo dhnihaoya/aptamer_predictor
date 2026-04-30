@@ -147,6 +147,11 @@ class EnsemblePredictor:
         self._load_all()
         self._setup_cuda()
 
+    @staticmethod
+    def _normalize_pair(sequence: str, smiles: str) -> tuple[str, str]:
+        """Normalize external prediction inputs consistently."""
+        return sequence.strip(), smiles.strip()
+
     def _load_all(self):
         pattern = os.path.join(self.model_dir, "(*mer)*.pkl")
         files = sorted(glob.glob(pattern))
@@ -235,6 +240,7 @@ class EnsemblePredictor:
         """
         from aptamer_predictor.features import MER_K_MAP, build_feature_vector
 
+        sequence, smiles = self._normalize_pair(sequence, smiles)
         results = {}
         model_labels = []
 
@@ -280,6 +286,7 @@ class EnsemblePredictor:
         all_results = []
 
         for i, (seq, smi) in enumerate(zip(sequences, smiles_list)):
+            seq, smi = self._normalize_pair(seq, smi)
             sample = {
                 "sequence": seq,
                 "smiles": smi,
@@ -373,6 +380,7 @@ class EnsemblePredictor:
             rna_to_dna,
         )
 
+        base_sequence, smiles = self._normalize_pair(base_sequence, smiles)
         seq = rna_to_dna(base_sequence).upper()
         seq_list = list(seq)
         seq_bytes = np.frombuffer(seq.encode("ascii"), dtype=np.uint8)
@@ -401,7 +409,9 @@ class EnsemblePredictor:
         for model, mer, fname in self.models:
             if mer is None or mer not in MER_K_MAP:
                 continue
-            model_configs.append((model, mer, fname, MER_K_MAP[mer]))
+            model_configs.append(
+                (len(model_configs), model, mer, fname, MER_K_MAP[mer])
+            )
 
         # --- Calibrate: determine optimal model order via small sample ---
         calib_seqs = []
@@ -415,16 +425,19 @@ class EnsemblePredictor:
                     mutant[pos] = new_base
             calib_seqs.append("".join(mutant))
 
-        scored: list[tuple[int, object, str, str, list[int]]] = []
-        for model, mer, fname, k_list in model_configs:
+        scored: list[tuple[int, int, object, str, str, list[int]]] = []
+        for original_idx, model, mer, fname, k_list in model_configs:
             _check_cancelled()
             X = build_feature_matrix(calib_seqs, desc, k_list)
             preds, _ = self._predict_batch(model, X)
             n_pos = int(preds.sum())
-            scored.append((n_pos, model, mer, fname, k_list))
+            scored.append((n_pos, original_idx, model, mer, fname, k_list))
         scored.sort(key=lambda x: x[0])  # most selective first
 
-        ordered_models = [(m, mer, fn, kl) for _, m, mer, fn, kl in scored]
+        ordered_models = [
+            (original_idx, m, mer, fn, kl)
+            for _, original_idx, m, mer, fn, kl in scored
+        ]
 
         # --- Main enumeration with early-exit filtering ---
         positives: Optional[list[dict]] = [] if collect_results else None
@@ -443,9 +456,9 @@ class EnsemblePredictor:
             # Early-exit sequential filtering
             surviving = np.arange(B)
             # Store per-candidate probs: list of arrays, one per model
-            all_model_probs = np.zeros((B, len(ordered_models)), dtype=np.float64)
+            all_model_probs = np.zeros((B, len(model_configs)), dtype=np.float64)
 
-            for m_idx, (model, mer, fname, k_list) in enumerate(ordered_models):
+            for model_idx, model, mer, fname, k_list in ordered_models:
                 _check_cancelled()
                 if len(surviving) == 0:
                     break
@@ -454,7 +467,7 @@ class EnsemblePredictor:
                 preds, probs = self._predict_batch(model, X)
 
                 # Store probs for all surviving candidates
-                all_model_probs[surviving, m_idx] = probs
+                all_model_probs[surviving, model_idx] = probs
 
                 # Filter: keep only positives
                 mask = preds >= 0.5

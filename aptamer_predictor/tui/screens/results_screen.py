@@ -63,7 +63,9 @@ class ResultsScreen(Screen):
         # Build CSV header: sequence + per-model probabilities + mean_probability
         app = self.app
         assert app.predictor is not None
-        model_names = [fname for (_, _, fname) in app.predictor.models]
+        model_names = [
+            fname for (_, _, fname) in getattr(app.predictor, "models", [])
+        ]
         self._model_names = model_names
         self._csv_writer.writerow(
             ["sequence"]
@@ -105,11 +107,10 @@ class ResultsScreen(Screen):
                 if self._csv_writer is None or self._csv_file is None:
                     return
                 model_probs = result.get("model_probabilities", [])
-                self._csv_writer.writerow([
-                    result["sequence"],
-                    *[f"{p:.6f}" for p in model_probs],
-                    f"{result['mean_probability']:.6f}",
-                ])
+                row = [result["sequence"]]
+                row.extend(f"{p:.6f}" for p in model_probs)
+                row.append(f"{result['mean_probability']:.6f}")
+                self._csv_writer.writerow(row)
                 self._csv_file.flush()
 
             self._hit_count += 1

@@ -36,8 +36,8 @@ def cmd_predict(args):
     if args.aptamer and args.smiles:
         from aptamer_predictor.features import MER_K_MAP, build_feature_vector
 
-        seq = args.aptamer
-        smi = args.smiles
+        seq = args.aptamer.strip()
+        smi = args.smiles.strip()
 
         print(f"Sequence : {seq[:60]}{'...' if len(seq)>60 else ''}")
         print(f"SMILES   : {smi[:60]}{'...' if len(smi)>60 else ''}\n")
