@@ -41,28 +41,48 @@ plt.rcParams.update({
 MODE_CONFIG = {
     "original": {
         "label": "Original (no opt.)",
-        "color": "#455a64",
+        "color": "#4D4D4D",
         "marker": "o",
-    },
-    "vectorized": {
-        "label": "Vectorized only",
-        "color": "#1565c0",
-        "marker": "s",
-    },
-    "cascade": {
-        "label": "Cascade only",
-        "color": "#2e7d32",
-        "marker": "^",
+        "linestyle": "--",
+        "hollow": True,
+        "x_offset": -0.045,
+        "zorder": 2,
     },
     "cuda": {
         "label": "CUDA only",
-        "color": "#6a1b9a",
+        "color": "#7B3294",
         "marker": "D",
+        "linestyle": "-",
+        "hollow": False,
+        "x_offset": 0.045,
+        "zorder": 3,
+    },
+    "vectorized": {
+        "label": "Vectorization only",
+        "color": "#0072B2",
+        "marker": "s",
+        "linestyle": "-",
+        "hollow": False,
+        "x_offset": 0.0,
+        "zorder": 4,
+    },
+    "cascade": {
+        "label": "Cascade only",
+        "color": "#009E73",
+        "marker": "^",
+        "linestyle": "-",
+        "hollow": False,
+        "x_offset": 0.0,
+        "zorder": 4,
     },
     "full": {
         "label": "Full acceleration",
-        "color": "#e65100",
+        "color": "#E69F00",
         "marker": "p",
+        "linestyle": "-",
+        "hollow": False,
+        "x_offset": 0.0,
+        "zorder": 5,
     },
 }
 
@@ -136,10 +156,13 @@ def plot(
     site_counts = sorted(set(r.n_sites for r in rows))
     modes = [m for m in MODE_CONFIG if any(r.mode == m for r in rows)]
 
-    fig, ax = plt.subplots(figsize=(7, 4.8))
+    all_valid_y = [r.elapsed for r in rows if r.elapsed is not None]
+
+    fig, ax = plt.subplots(figsize=(7.8, 4.6))
 
     for mode in modes:
         cfg = MODE_CONFIG[mode]
+        x_off = cfg["x_offset"]
 
         # Collect valid (non-timeout) points in site order
         valid_x, valid_y = [], []
@@ -151,32 +174,38 @@ def plot(
                 continue
             elapsed = match[0].elapsed
             if elapsed is not None:
-                valid_x.append(ns)
+                valid_x.append(ns + x_off)
                 valid_y.append(elapsed)
             else:
                 if timeout_start is None:
                     timeout_start = ns
 
-        # Solid line for completed runs
+        # Line for completed runs
         if valid_x:
+            mfc = "white" if cfg["hollow"] else cfg["color"]
+            mec = cfg["color"] if cfg["hollow"] else "white"
             ax.plot(valid_x, valid_y,
                     color=cfg["color"], marker=cfg["marker"], markersize=7,
-                    linewidth=1.8, label=cfg["label"], zorder=3,
-                    markeredgecolor="white", markeredgewidth=0.8)
+                    linewidth=1.8, linestyle=cfg["linestyle"],
+                    label=cfg["label"], zorder=cfg["zorder"],
+                    markerfacecolor=mfc, markeredgecolor=mec,
+                    markeredgewidth=0.8)
 
         # Dashed segment from last valid to timeout ceiling
         if timeout_start is not None and valid_x:
-            to_x = [valid_x[-1], timeout_start]
+            to_x = [valid_x[-1], timeout_start + x_off]
             to_y = [valid_y[-1], timeout]
             ax.plot(to_x, to_y,
                     color=cfg["color"], linestyle="--",
                     linewidth=1.2, alpha=0.5, zorder=2)
-            ax.scatter([timeout_start], [timeout],
+            ax.scatter([timeout_start + x_off], [timeout],
                        color=cfg["color"], marker="^", s=50, zorder=4, alpha=0.7,
                        edgecolors="white", linewidths=0.8)
 
-    # Timeout annotation
-    ax.axhline(y=timeout, color="#999999", linestyle="--", linewidth=0.6, zorder=1)
+    # Timeout annotation: subtle dotted line + text label
+    ax.axhline(y=timeout, color="0.65", linestyle=":", linewidth=0.5, zorder=1)
+    ax.text(site_counts[-1] + 0.3, timeout, "timeout",
+            fontsize=8, color="0.55", va="center", ha="left")
 
     # Axes
     ax.set_xlabel("Number of mutation sites", fontsize=12)
@@ -185,26 +214,40 @@ def plot(
     ax.set_xticks(site_counts)
     ax.set_xticklabels([str(s) for s in site_counts], fontsize=11)
 
-    # Nice time-scale ticks
-    y_ticks = [0.1, 1, 10, 60, 600, 3600]
-    y_labels = ["100ms", "1s", "10s", "1m", "10m", "1h"]
-    ax.set_yticks(y_ticks)
-    ax.set_yticklabels(y_labels, fontsize=10)
-    ax.set_ylim(0.05, 5000)
+    # Y-axis: use _fmt_y formatter + minor ticks
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(_fmt_y))
+    ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=12))
+    ax.yaxis.set_minor_locator(
+        ticker.LogLocator(base=10, subs=[2, 5], numticks=12)
+    )
+
+    # Adaptive y-limits
+    if all_valid_y:
+        y_lo = min(all_valid_y) / 3
+        y_hi = max(max(all_valid_y), timeout) * 2
+    else:
+        y_lo, y_hi = 0.05, timeout * 2
+    ax.set_ylim(y_lo, y_hi)
     ax.set_xlim(site_counts[0] - 0.5, site_counts[-1] + 0.5)
 
-    # Subtle horizontal grid lines
+    # Spines & grid
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    ax.yaxis.grid(True, which="major", color="0.86", linewidth=0.5)
+    ax.yaxis.grid(True, which="minor", color="0.93", linewidth=0.3)
 
+    # Legend below the plot
     ax.legend(
-        loc="lower right",
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=3,
         fontsize=10,
         handlelength=2.5,
         handletextpad=0.4,
+        columnspacing=1.2,
     )
 
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
 
     if output:
         fig.savefig(output, dpi=dpi, bbox_inches="tight")
