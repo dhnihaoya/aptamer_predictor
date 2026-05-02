@@ -207,7 +207,7 @@ def benchmark_original(models, seq, desc, sites, cancel):
         all_positive = np.ones(B, dtype=bool)
         for _, model, mer, _ in active:
             X = _build_feat_matrix_from_strings(chunk, desc, MER_K_MAP[mer])
-            preds = model.predict(X)
+            preds, _ = _predict_cpu(model, X)
             all_positive &= (preds >= 0.5)
         positives += int(all_positive.sum())
         processed += B
@@ -268,7 +268,7 @@ def benchmark_cascade(models, seq, desc, sites, cancel):
             X = _build_feat_matrix_from_strings(
                 [chunk[i] for i in surviving], desc, k_list
             )
-            preds = model.predict(X)
+            preds, _ = _predict_cpu(model, X)
             mask = preds >= 0.5
             surviving = surviving[mask]
 
@@ -329,8 +329,8 @@ def benchmark_no_batch(models, seq, desc, sites, cancel):
         all_positive = True
         for _, model, mer, _ in active:
             feat = build_feature_vector_fast(mutant_seq, desc, MER_K_MAP[mer])
-            pred = model.predict(feat.reshape(1, -1))[0]
-            if pred < 0.5:
+            pred, _ = _predict_cpu(model, feat.reshape(1, -1))
+            if pred[0] < 0.5:
                 all_positive = False
         if all_positive:
             positives += 1
