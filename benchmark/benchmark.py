@@ -171,9 +171,15 @@ def _get_active_models(models):
 
 
 def _predict_cpu(model, X):
-    preds = model.predict(X)
+    try:
+        import torch
+        if isinstance(model, torch.nn.Module):
+            probs = model.predict_proba(X)[:, 1]
+            return (probs >= 0.5).astype(int), probs
+    except ImportError:
+        pass
     probs = model.predict_proba(X)[:, 1]
-    return (preds >= 0.5).astype(int), probs
+    return (probs >= 0.5).astype(int), probs
 
 
 def _build_feat_matrix_from_strings(strings, desc, k_list):

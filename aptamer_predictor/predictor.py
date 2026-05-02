@@ -84,7 +84,8 @@ class SimpleRNN:
                 with torch.no_grad():
                     if not isinstance(X, np.ndarray):
                         X = np.asarray(X, dtype=np.float32)
-                    t = torch.FloatTensor(X)
+                    device = next(self.parameters()).device
+                    t = torch.tensor(X, dtype=torch.float32, device=device)
                     if t.dim() == 1:
                         t = t.unsqueeze(0)
                     out = self.forward(t).cpu().numpy()
@@ -210,21 +211,18 @@ class EnsemblePredictor:
 
         Returns (predictions, positive_class_probabilities).
         """
-        # XGBoost GPU path
-        if self._device == "cuda" and self._is_xgboost(model):
-            try:
-                import xgboost as xgb
-                booster = model.get_booster()
-                dm = xgb.DMatrix(X.astype(np.float32), device="cuda")
-                probs = booster.predict(dm)
+        # PyTorch fast path (single forward pass, direct GPU tensor)
+        try:
+            import torch
+            if isinstance(model, torch.nn.Module):
+                probs = model.predict_proba(X)[:, 1]
                 return (probs >= 0.5).astype(int), probs
-            except Exception:
-                pass  # fall through to CPU
+        except ImportError:
+            pass
 
-        # Standard sklearn / PyTorch API (PyTorch handles CUDA internally)
-        preds = model.predict(X)
+        # sklearn / XGBoost path (CPU — GPU overhead exceeds benefit for these small models)
         probs = model.predict_proba(X)[:, 1]
-        return preds.astype(int), probs
+        return (probs >= 0.5).astype(int), probs
 
     # ---- single sample ---------------------------------------------------
 
