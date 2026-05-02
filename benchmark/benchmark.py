@@ -462,97 +462,121 @@ def run_benchmarks(
     desc = molecular_descriptors(smiles)
     all_results: list[BenchResult] = []
     timed_out: set[str] = set()  # modes that already timed out at smaller site counts
+    slow_modes: set[str] = set()  # modes whose elapsed > timeout/4 at smaller site counts
 
-    for n_sites in site_counts:
-        sites = _compute_sites(seq, n_sites)
-        n_candidates = 4 ** n_sites
-        print(f"--- {n_sites} sites ({n_candidates:,} candidates) ---")
-        print(f"    Sites: {sites}")
+    csv_f, csv_writer = (None, None)
+    if output_csv:
+        csv_f, csv_writer = _open_csv(output_csv)
+        print(f"Results streaming to {output_csv}")
 
-        def _run_mode(mode, label, fn, args):
-            if mode in timed_out:
-                print(f"  {label} ... SKIP (timed out at fewer sites)")
-                all_results.append(BenchResult(mode, n_sites, n_candidates))
-                return
-            cancel = threading.Event()
-            print(f"  {label} ...")
-            try:
-                elapsed, pos = _run_with_timeout(fn, args, timeout, cancel)
-                if elapsed is None:
-                    timed_out.add(mode)
-                print(f"\r  {label} ... {_format_time(elapsed)}  ({pos} positives)           ")
-            except Exception as e:
-                elapsed, pos = None, 0
-                timed_out.add(mode)
-                print(f"\r  {label} ... ERROR: {e}")
-            all_results.append(BenchResult(mode, n_sites, n_candidates, elapsed, pos))
-
-        _run_mode("original", "Original", benchmark_original,
-                   (cpu_models, seq, desc, sites, threading.Event()))
-        _run_mode("vectorized", "Vectorized", benchmark_vectorized,
-                   (cpu_models, seq, desc, sites, threading.Event()))
-        _run_mode("cascade", "Cascade", benchmark_cascade,
-                   (cpu_models, seq, desc, sites, threading.Event()))
-
-        if has_cuda:
-            _run_mode("cuda", "CUDA", benchmark_cuda,
-                       (predictor, seq, desc, sites, threading.Event()))
-        else:
-            print("  CUDA ... SKIPPED (no CUDA)")
-            all_results.append(BenchResult("cuda", n_sites, n_candidates))
-
-        _run_mode("full", "Full", benchmark_full,
-                   (predictor, seq, smiles, sites, threading.Event()))
-
-        print()
-
-    _print_table(all_results, site_counts)
-
-    # --- Batch vs No-batch comparison (sites 7-9 only) ---
-    batch_sites = [n for n in site_counts if n <= 9]
-    if batch_sites:
-        print("\n=== Batch vs No-batch (per-string features, CPU) ===")
-        batch_results: list[BenchResult] = []
-        for n_sites in batch_sites:
+    try:
+        for n_sites in site_counts:
             sites = _compute_sites(seq, n_sites)
             n_candidates = 4 ** n_sites
             print(f"--- {n_sites} sites ({n_candidates:,} candidates) ---")
+            print(f"    Sites: {sites}")
 
-            # No batch
-            cancel = threading.Event()
-            print(f"  No batch ...")
-            try:
-                elapsed, pos = _run_with_timeout(
-                    benchmark_no_batch, (cpu_models, seq, desc, sites, cancel),
-                    timeout, cancel)
-                print(f"\r  No batch ... {_format_time(elapsed)}  ({pos} positives)           ")
-            except Exception as e:
-                elapsed, pos = None, 0
-                print(f"\r  No batch ... ERROR: {e}")
-            batch_results.append(BenchResult("no_batch", n_sites, n_candidates, elapsed, pos))
+            def _run_mode(mode, label, fn, args):
+                if mode in timed_out:
+                    print(f"  {label} ... SKIP (timed out at fewer sites)")
+                    r = BenchResult(mode, n_sites, n_candidates)
+                    all_results.append(r)
+                    if csv_writer: _write_csv_row(csv_writer, csv_f, r)
+                    return
+                if mode in slow_modes:
+                    print(f"  {label} ... SKIP (too slow at fewer sites)")
+                    r = BenchResult(mode, n_sites, n_candidates)
+                    all_results.append(r)
+                    if csv_writer: _write_csv_row(csv_writer, csv_f, r)
+                    return
+                cancel = threading.Event()
+                print(f"  {label} ...")
+                try:
+                    elapsed, pos = _run_with_timeout(fn, args, timeout, cancel)
+                    if elapsed is None:
+                        timed_out.add(mode)
+                    elif elapsed > timeout / 4:
+                        slow_modes.add(mode)
+                    print(f"\r  {label} ... {_format_time(elapsed)}  ({pos} positives)           ")
+                except Exception as e:
+                    elapsed, pos = None, 0
+                    timed_out.add(mode)
+                    print(f"\r  {label} ... ERROR: {e}")
+                r = BenchResult(mode, n_sites, n_candidates, elapsed, pos)
+                all_results.append(r)
+                if csv_writer: _write_csv_row(csv_writer, csv_f, r)
 
-            # Batch (reuse original mode = per-string features + batch predict)
-            cancel = threading.Event()
-            print(f"  Batch    ...")
-            try:
-                elapsed, pos = _run_with_timeout(
-                    benchmark_original, (cpu_models, seq, desc, sites, cancel),
-                    timeout, cancel)
-                print(f"\r  Batch    ... {_format_time(elapsed)}  ({pos} positives)           ")
-            except Exception as e:
-                elapsed, pos = None, 0
-                print(f"\r  Batch    ... ERROR: {e}")
-            batch_results.append(BenchResult("batch", n_sites, n_candidates, elapsed, pos))
+            _run_mode("original", "Original", benchmark_original,
+                       (cpu_models, seq, desc, sites, threading.Event()))
+            _run_mode("vectorized", "Vectorized", benchmark_vectorized,
+                       (cpu_models, seq, desc, sites, threading.Event()))
+            _run_mode("cascade", "Cascade", benchmark_cascade,
+                       (cpu_models, seq, desc, sites, threading.Event()))
 
-            if elapsed is not None and batch_results[-2].elapsed is not None:
-                speedup = batch_results[-2].elapsed / elapsed
-                print(f"  Speedup  : {speedup:.1f}x")
+            if has_cuda:
+                _run_mode("cuda", "CUDA", benchmark_cuda,
+                           (predictor, seq, desc, sites, threading.Event()))
+            else:
+                print("  CUDA ... SKIPPED (no CUDA)")
+                r = BenchResult("cuda", n_sites, n_candidates)
+                all_results.append(r)
+                if csv_writer: _write_csv_row(csv_writer, csv_f, r)
 
-        _print_batch_table(batch_results, batch_sites)
+            _run_mode("full", "Full", benchmark_full,
+                       (predictor, seq, smiles, sites, threading.Event()))
 
-    if output_csv:
-        _write_csv(all_results, output_csv)
-        print(f"\nResults saved to {output_csv}")
+            print()
+
+        _print_table(all_results, site_counts)
+
+        # --- Batch vs No-batch comparison (sites 7-9 only) ---
+        batch_sites = [n for n in site_counts if n <= 9]
+        if batch_sites:
+            print("\n=== Batch vs No-batch (per-string features, CPU) ===")
+            batch_results: list[BenchResult] = []
+            for n_sites in batch_sites:
+                sites = _compute_sites(seq, n_sites)
+                n_candidates = 4 ** n_sites
+                print(f"--- {n_sites} sites ({n_candidates:,} candidates) ---")
+
+                # No batch
+                cancel = threading.Event()
+                print(f"  No batch ...")
+                try:
+                    elapsed, pos = _run_with_timeout(
+                        benchmark_no_batch, (cpu_models, seq, desc, sites, cancel),
+                        timeout, cancel)
+                    print(f"\r  No batch ... {_format_time(elapsed)}  ({pos} positives)           ")
+                except Exception as e:
+                    elapsed, pos = None, 0
+                    print(f"\r  No batch ... ERROR: {e}")
+                r = BenchResult("no_batch", n_sites, n_candidates, elapsed, pos)
+                batch_results.append(r)
+                if csv_writer: _write_csv_row(csv_writer, csv_f, r)
+
+                # Batch (reuse original mode = per-string features + batch predict)
+                cancel = threading.Event()
+                print(f"  Batch    ...")
+                try:
+                    elapsed, pos = _run_with_timeout(
+                        benchmark_original, (cpu_models, seq, desc, sites, cancel),
+                        timeout, cancel)
+                    print(f"\r  Batch    ... {_format_time(elapsed)}  ({pos} positives)           ")
+                except Exception as e:
+                    elapsed, pos = None, 0
+                    print(f"\r  Batch    ... ERROR: {e}")
+                r = BenchResult("batch", n_sites, n_candidates, elapsed, pos)
+                batch_results.append(r)
+                if csv_writer: _write_csv_row(csv_writer, csv_f, r)
+
+                if elapsed is not None and batch_results[-2].elapsed is not None:
+                    speedup = batch_results[-2].elapsed / elapsed
+                    print(f"  Speedup  : {speedup:.1f}x")
+
+            _print_batch_table(batch_results, batch_sites)
+    finally:
+        if csv_f:
+            csv_f.close()
 
 
 def _print_table(results, site_counts):
@@ -599,17 +623,24 @@ def _print_batch_table(results, site_counts):
     print(sep)
 
 
-def _write_csv(results, path):
+def _open_csv(path):
+    """Open CSV file, write header, return (file, writer)."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["n_sites", "n_candidates", "mode", "elapsed_seconds", "n_positives"])
-        for r in results:
-            writer.writerow([
-                r.n_sites, r.n_candidates, r.mode,
-                f"{r.elapsed:.4f}" if r.elapsed is not None else "TIMEOUT",
-                r.n_positives,
-            ])
+    f = open(path, "w", newline="")
+    writer = csv.writer(f)
+    writer.writerow(["n_sites", "n_candidates", "mode", "elapsed_seconds", "n_positives"])
+    f.flush()
+    return f, writer
+
+
+def _write_csv_row(writer, f, r):
+    """Write and flush a single result row."""
+    writer.writerow([
+        r.n_sites, r.n_candidates, r.mode,
+        f"{r.elapsed:.4f}" if r.elapsed is not None else "TIMEOUT",
+        r.n_positives,
+    ])
+    f.flush()
 
 
 # ---------------------------------------------------------------------------
