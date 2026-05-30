@@ -43,5 +43,8 @@ AGENTS.md
 # Root CSV files
 /*.csv
 
+# Benchmark
+benchmark/
+
 # Docs
 docs/
