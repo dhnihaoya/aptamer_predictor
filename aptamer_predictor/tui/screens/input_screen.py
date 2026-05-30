@@ -24,8 +24,11 @@ def _resolve_name_or_smiles(text: str) -> tuple[str | None, str | None]:
     if not text:
         return None, "Target molecule is required"
 
-    # Try as SMILES first
+    # Try as SMILES first (suppress parse warnings for non-SMILES names)
+    from rdkit import RDLogger
+    RDLogger.DisableLog("rdApp.error")
     mol = Chem.MolFromSmiles(text)
+    RDLogger.EnableLog("rdApp.error")
     if mol is not None:
         smiles = Chem.MolToSmiles(mol)
         return smiles, text
@@ -43,7 +46,8 @@ def _resolve_name_or_smiles(text: str) -> tuple[str | None, str | None]:
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
-        smiles = data["PropertyTable"]["Properties"][0]["IsomericSMILES"]
+        props = data["PropertyTable"]["Properties"][0]
+        smiles = props.get("IsomericSMILES") or props.get("SMILES")
         return smiles, text
     except (urllib.error.URLError, KeyError, IndexError):
         return None, f"Cannot resolve '{text}' as SMILES or molecule name"
