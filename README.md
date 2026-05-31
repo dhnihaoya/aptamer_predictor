@@ -12,29 +12,16 @@ Small molecule SMILES ──→ 209 RDKit descriptors ──┘
 
 ## Setup
 
-### 1. Create a conda environment
+### 1. Create conda environment
 
 ```bash
-conda create -n aptamer-pred python=3.9 -y
-conda deactivate （if base is activated）
-conda activate aptamer-pred
+conda env create -f environment.yml
+conda activate aptamer-predictor
 ```
 
-### 2. Install RDKit
+> **Note:** 必须使用 conda 安装（不要用 pip）。pip 版本的 numpy 自带线程受限的 OpenBLAS（`MAX_THREADS=2`），会导致批量预测 CPU 占用极低。conda-forge 版本没有此限制。
 
-```bash
-conda install -c conda-forge rdkit=2023.9.5 -y
-```
-
-### 3. Install remaining dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-> **Note:** install the pinned RDKit version above; descriptor values are part of the trained model input schema. `rdkit` should be installed via conda, not pip. All other packages can be installed via pip.
-
-### 4. Verify installation
+### 2. Verify installation
 
 ```bash
 python -m aptamer_predictor predict --help
@@ -220,7 +207,7 @@ Feature dim = sum(4^k for each k) + 209 RDKit descriptors (Ipc excluded).
 ├── data/                       # Training source data
 │   ├── Non-redundant aptamer sequences.csv
 │   └── Non-redundant target.csv
-├── requirements.txt
+├── environment.yml
 ├── README.md
 └── CLAUDE.md
 ```
@@ -229,9 +216,9 @@ Feature dim = sum(4^k for each k) + 209 RDKit descriptors (Ipc excluded).
 
 | Package      | Version |
 |--------------|---------|
-| Python       | 3.9.18  |
+| Python       | 3.10    |
 | scikit-learn | 1.5.0   |
 | XGBoost      | 2.0.3   |
 | PyTorch      | 1.12.1  |
 | RDKit        | 2023.9.5|
-| NumPy        | 1.24.3  |
+| NumPy        | 1.26.4  |
