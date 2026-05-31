@@ -279,12 +279,25 @@ class EnsemblePredictor:
         Returns:
             List of result dicts.
         """
-        from aptamer_predictor.features import MER_K_MAP, build_feature_vector
+        from aptamer_predictor.features import (
+            MER_K_MAP,
+            build_feature_vector_fast,
+            molecular_descriptors,
+        )
+
+        # Pre-compute molecular descriptors once per unique SMILES
+        normalized = [
+            self._normalize_pair(seq, smi)
+            for seq, smi in zip(sequences, smiles_list)
+        ]
+        unique_smiles = {smi for _, smi in normalized}
+        desc_cache = {smi: molecular_descriptors(smi) for smi in unique_smiles}
 
         all_results = []
 
-        for i, (seq, smi) in enumerate(zip(sequences, smiles_list)):
-            seq, smi = self._normalize_pair(seq, smi)
+        for i, ((seq, smi), (_, orig_smi)) in enumerate(
+            zip(normalized, smiles_list)
+        ):
             sample = {
                 "sequence": seq,
                 "smiles": smi,
@@ -296,12 +309,13 @@ class EnsemblePredictor:
 
             individual = {}
             model_labels = []
+            desc = desc_cache[smi]
 
             for model, mer, fname in self.models:
                 if mer is None or mer not in MER_K_MAP:
                     continue
                 k_list = MER_K_MAP[mer]
-                feat = build_feature_vector(seq, smi, k_list)
+                feat = build_feature_vector_fast(seq, desc, k_list)
 
                 pred = model.predict(feat.reshape(1, -1))[0]
                 prob = model.predict_proba(feat.reshape(1, -1))[0, 1]
